@@ -1,62 +1,57 @@
-import time
 import hmac
 import hashlib
+import time
 import requests
-from config import MEXC_API_KEY, MEXC_API_SECRET, POSITION_SIZE_PERCENT, LEVERAGE
+import json
 
-BASE_URL = "https://contract.mexc.com"
+API_KEY = "mx0vglSFP0y6ypr7Dl"
+API_SECRET = "55e276ea2ffc4bb2b2752b4a2906a849"
 
-def sign(params, secret):
-    query_string = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-    return hmac.new(secret.encode(), query_string.encode(), hashlib.sha256).hexdigest()
+BASE_URL = "https://api.mexc.com"
 
-def get_balance():
-    path = "/api/v1/private/account/asset/USDT"
-    timestamp = int(time.time() * 1000)
-    params = {
-        "api_key": MEXC_API_KEY,
-        "req_time": timestamp
-    }
-    params["sign"] = sign(params, MEXC_API_SECRET)
-    response = requests.get(BASE_URL + path, params=params)
-    data = response.json()
-    if data.get("success"):
-        return float(data["data"]["availableBalance"])
-    return 0.0
+def get_timestamp():
+    return str(int(time.time() * 1000))
 
-def place_order(symbol, side, price, quantity):
-    path = "/api/v1/private/order/submit"
-    timestamp = int(time.time() * 1000)
-    params = {
-        "api_key": MEXC_API_KEY,
-        "req_time": timestamp,
-        "symbol": symbol.lower(),
-        "price": price,
-        "vol": quantity,
+def sign(params: dict):
+    query_string = '&'.join([f"{key}={params[key]}" for key in sorted(params)])
+    signature = hmac.new(API_SECRET.encode(), query_string.encode(), hashlib.sha256).hexdigest()
+    return signature
+
+def place_order(symbol, side, price, stop_loss, take_profit, quantity):
+    endpoint = "/api/v1/private/order/submit"
+    url = BASE_URL + endpoint
+
+    timestamp = get_timestamp()
+    
+    data = {
+        "apiKey": API_KEY,
+        "timestamp": timestamp,
+        "symbol": symbol,
+        "price": str(price),
+        "vol": str(quantity),
         "side": side,
-        "leverage": LEVERAGE,
-        "category": 1,
-        "trade_type": 1,
+        "type": 1,  # 1 = limit order
+        "open_type": 1,
+        "position_id": 0,
+        "leverage": 100,
+        "external_oid": str(int(time.time())),
+        "stop_loss_price": str(stop_loss),
+        "take_profit_price": str(take_profit),
         "position_mode": 1,
-        "reduce_only": False,
-        "price_type": 1,
+        "reduce_only": False
     }
-    params["sign"] = sign(params, MEXC_API_SECRET)
-    response = requests.post(BASE_URL + path, data=params)
-    return response.json()
 
-async def open_position(symbol, direction, entry_price, tp1, tp2, sl, message):
-    balance = get_balance()
-    if balance == 0:
-        await message.reply("❌ مافي رصيد كافي.")
-        return
+    data["sign"] = sign(data)
 
-    side = 1 if direction == "long" else 2
-    position_size = balance * (POSITION_SIZE_PERCENT / 100)
-    quantity = round(position_size / entry_price, 4)
-    response = place_order(symbol, side, entry_price, quantity)
+    headers = {
+        "Content-Type": "application/json"
+    }
 
-    if response.get("success"):
-        await message.reply(f"✅ تم فتح صفقة {direction.upper()} على {symbol} بحجم {quantity} عند السعر {entry_price}")
-    else:
-        await message.reply(f"❌ خطأ: {response.get('message')}")
+    try:
+        response = requests.post(url, data=json.dumps(data), headers=headers)
+        response.raise_for_status()
+        print(f"✅ Order Response: {response.text}")
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Order Failed: {e}")
+        return None
